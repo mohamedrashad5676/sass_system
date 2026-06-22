@@ -1,0 +1,332 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  firstName    String   @map("first_name")
+  lastName     String   @map("last_name")
+  isAdmin      Boolean  @default(false) @map("is_admin")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  accounts     UserAccountManagement[]
+  rooms        Room[]
+  activeMeetingsStarted ActiveMeeting[] @relation("MeetingStarter")
+  @@map("users")
+}
+
+model UserAccount {
+  id          String      @id @default(cuid())
+  type        AccountType
+  name        String
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+  members      UserAccountManagement[]
+  subscription Subscription?
+  wallet       Wallet?
+  invoices     Invoice[]
+  downgrade    Downgrade?
+  rooms        Room[]
+  @@map("user_accounts")
+}
+
+enum AccountType {
+  individual
+  organization
+}
+
+model UserAccountManagement {
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id")
+  userAccountId String   @map("user_account_id")
+  role          Role     @default(member)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  user          User        @relation(fields: [userId], references: [id])
+  userAccount   UserAccount @relation(fields: [userAccountId], references: [id])
+  features      MemberFeature[]
+  @@unique([userId, userAccountId])
+  @@map("user_account_managements")
+}
+
+enum Role {
+  owner
+  admin
+  member
+}
+
+model MemberFeature {
+  id                      String   @id @default(cuid())
+  userAccountManagementId String   @map("user_account_management_id")
+  featureKey              String   @map("feature_key")
+  featureValue            String   @map("feature_value")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+  management              UserAccountManagement @relation(fields: [userAccountManagementId], references: [id])
+  @@unique([userAccountManagementId, featureKey])
+  @@map("member_features")
+}
+
+model Plan {
+  id           String      @id @default(cuid())
+  name         String      @unique
+  accountType  AccountType @map("account_type")
+  seatModel    SeatModel   @map("seat_model")
+  priceMonthly Decimal     @map("price_monthly") @db.Decimal(10,2)
+  priceAnnual  Decimal     @map("price_annual")  @db.Decimal(10,2)
+  isActive     Boolean     @default(true) @map("is_active")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  details       PlanDetail?
+  addons        PlanAddon[]
+  subscriptions Subscription[]
+  coupons       PlanCoupon[]
+  @@map("plans")
+}
+
+enum SeatModel {
+  dedicated
+  shared_pool
+  hybrid
+}
+
+model PlanDetail {
+  id                   String  @id @default(cuid())
+  planId               String  @unique @map("plan_id")
+  baseSeatCount        Int?    @map("base_seat_count")
+  baseRoomPoolSize     Int?    @map("base_room_pool_size")
+  maxParticipants      Int     @map("max_participants")
+  storageGb            Int     @map("storage_gb")
+  maxMeetingDurationMin Int?   @map("max_meeting_duration_min")
+  meetingQuotaDays     Int?    @map("meeting_quota_days")
+  plan                 Plan    @relation(fields: [planId], references: [id])
+  @@map("plan_details")
+}
+
+model Addon {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  manifest  Json
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  planAddons PlanAddon[]
+  @@map("addons")
+}
+
+model PlanAddon {
+  id       String  @id @default(cuid())
+  planId   String  @map("plan_id")
+  addonId  String  @map("addon_id")
+  price    Decimal @db.Decimal(10,2)
+  cycle    String
+  unit     String
+  config   Json
+  plan     Plan    @relation(fields: [planId], references: [id])
+  addon    Addon   @relation(fields: [addonId], references: [id])
+  subscriptionAddonItems SubscriptionAddonItem[]
+  coupons  PlanAddonCoupon[]
+  @@unique([planId, addonId])
+  @@map("plan_addons")
+}
+
+model Subscription {
+  id            String             @id @default(cuid())
+  userAccountId String             @unique @map("user_account_id")
+  planId        String             @map("plan_id")
+  status        SubscriptionStatus @default(active)
+  billingCycle  BillingCycle       @map("billing_cycle")
+  startDate     DateTime           @map("start_date")
+  endDate       DateTime           @map("end_date")
+  renewDate     DateTime           @map("renew_date")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+  userAccount   UserAccount        @relation(fields: [userAccountId], references: [id])
+  plan          Plan               @relation(fields: [planId], references: [id])
+  addonItems    SubscriptionAddonItem[]
+  invoices      Invoice[]
+  @@map("subscription")
+}
+
+enum SubscriptionStatus {
+  active
+  past_due
+  suspended
+  cancel_pending
+  cancelled
+}
+
+enum BillingCycle {
+  monthly
+  annual
+}
+
+model SubscriptionAddonItem {
+  id             String      @id @default(cuid())
+  subscriptionId String      @map("subscription_id")
+  planAddonId    String      @map("plan_addon_id")
+  count          Int         @default(1)
+  status         AddonStatus @default(active)
+  autoRenew      Boolean     @default(true) @map("auto_renew")
+  startTime      DateTime    @map("start_time")
+  endTime        DateTime    @map("end_time")
+  runtimeConfig  Json        @map("runtime_config")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id])
+  planAddon      PlanAddon   @relation(fields: [planAddonId], references: [id])
+  @@map("subscription_addon_items")
+}
+
+enum AddonStatus {
+  active
+  past_due
+  suspended
+  cancelled
+}
+
+model Downgrade {
+  id            String   @id @default(cuid())
+  userAccountId String   @unique @map("user_account_id")
+  newPlanId     String   @map("new_plan_id")
+  requestedAt   DateTime @default(now()) @map("requested_at")
+  requestedBy   String   @map("requested_by")
+  userAccount   UserAccount         @relation(fields: [userAccountId], references: [id])
+  addonItems    DowngradeAddonItem[]
+  @@map("downgrades")
+}
+
+model DowngradeAddonItem {
+  id          String   @id @default(cuid())
+  downgradeId String   @map("downgrade_id")
+  addonItemId String   @map("addon_item_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  downgrade   Downgrade @relation(fields: [downgradeId], references: [id], onDelete: Cascade)
+  @@map("downgrade_addon_items")
+}
+
+model Coupon {
+  id             String    @id @default(cuid())
+  code           String    @unique
+  discountType   String    @map("discount_type")
+  discountValue  Decimal   @map("discount_value") @db.Decimal(10,2)
+  maxGlobalUses  Int?      @map("max_global_uses")
+  maxPerUserUses Int?      @map("max_per_user_uses")
+  currentUses    Int       @default(0) @map("current_uses")
+  expiresAt      DateTime? @map("expires_at")
+  isActive       Boolean   @default(true) @map("is_active")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  planCoupons    PlanCoupon[]
+  addonCoupons   PlanAddonCoupon[]
+  invoices       Invoice[]
+  @@map("coupons")
+}
+
+model PlanCoupon {
+  id       String @id @default(cuid())
+  planId   String @map("plan_id")
+  couponId String @map("coupon_id")
+  plan     Plan   @relation(fields: [planId], references: [id])
+  coupon   Coupon @relation(fields: [couponId], references: [id])
+  @@unique([planId, couponId])
+  @@map("plan_coupons")
+}
+
+model PlanAddonCoupon {
+  id          String    @id @default(cuid())
+  planAddonId String    @map("plan_addon_id")
+  couponId    String    @map("coupon_id")
+  planAddon   PlanAddon @relation(fields: [planAddonId], references: [id])
+  coupon      Coupon    @relation(fields: [couponId], references: [id])
+  @@unique([planAddonId, couponId])
+  @@map("plan_addon_coupons")
+}
+
+model Invoice {
+  id             String        @id @default(cuid())
+  subscriptionId String        @map("subscription_id")
+  userAccountId  String        @map("user_account_id")
+  couponId       String?       @map("coupon_id")
+  totalPrice     Decimal       @map("total_price") @db.Decimal(10,2)
+  status         InvoiceStatus @default(issued)
+  paymentStatus  PaymentStatus @default(paid) @map("payment_status")
+  type           InvoiceType
+  idempotencyKey String        @unique @map("idempotency_key")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  subscription   Subscription  @relation(fields: [subscriptionId], references: [id])
+  userAccount    UserAccount   @relation(fields: [userAccountId], references: [id])
+  coupon         Coupon?       @relation(fields: [couponId], references: [id])
+  items          InvoiceItem[]
+  @@map("invoices")
+}
+
+enum InvoiceStatus { draft issued void }
+enum PaymentStatus { paid unpaid refunded }
+enum InvoiceType   { subscription addon topup refund }
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String  @map("invoice_id")
+  name        String
+  description String?
+  price       Decimal @db.Decimal(10,2)
+  quantity    Int     @default(1)
+  invoice     Invoice @relation(fields: [invoiceId], references: [id])
+  @@map("invoice_items")
+}
+
+model Wallet {
+  id            String   @id @default(cuid())
+  userAccountId String   @unique @map("user_account_id")
+  balance       Decimal  @default(0) @db.Decimal(10,2)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  userAccount   UserAccount         @relation(fields: [userAccountId], references: [id])
+  transactions  WalletTransaction[]
+  @@map("wallets")
+}
+
+model WalletTransaction {
+  id             String          @id @default(cuid())
+  walletId       String          @map("wallet_id")
+  type           TransactionType
+  amount         Decimal         @db.Decimal(10,2)
+  description    String
+  idempotencyKey String          @unique @map("idempotency_key")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  wallet         Wallet          @relation(fields: [walletId], references: [id])
+  @@map("wallet_transactions")
+}
+
+enum TransactionType { credit debit }
+
+model Room {
+  id            String   @id @default(cuid())
+  userAccountId String   @map("user_account_id")
+  ownerId       String   @map("owner_id")
+  name          String
+  seatModel     SeatModel @map("seat_model")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  userAccount   UserAccount    @relation(fields: [userAccountId], references: [id])
+  owner         User           @relation(fields: [ownerId], references: [id])
+  activeMeeting ActiveMeeting?
+  @@map("rooms")
+}
+
+model ActiveMeeting {
+  id        String   @id @default(cuid())
+  roomId    String   @unique @map("room_id")
+  startedBy String   @map("started_by")
+  startedAt DateTime @default(now()) @map("started_at")
+  metadata  Json     @default("{}")
+  room      Room     @relation(fields: [roomId], references: [id])
+  startedByUser User @relation("MeetingStarter", fields: [startedBy], references: [id])
+  @@map("active_meetings")
+}
